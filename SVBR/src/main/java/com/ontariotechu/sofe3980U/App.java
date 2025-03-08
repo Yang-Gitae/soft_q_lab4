@@ -1,133 +1,180 @@
 package com.ontariotechu.sofe3980U;
 
+import com.opencsv.CSVReader;
+import com.opencsv.CSVReaderBuilder;
 import java.io.FileReader;
-import java.util.List;
 import java.util.ArrayList;
-import com.opencsv.*;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * Evaluate Single Variable Binary Regression
- *
+ * This class evaluates binary classification models by computing various metrics including AUC-ROC.
+ * It reads model predictions from CSV files and calculates metrics such as BCE, Accuracy, Precision, Recall, F1 Score, and AUC-ROC.
  */
 public class App {
-	public static void main(String[] args) {
-		String[] modelFiles = {"model_1.csv", "model_2.csv", "model_3.csv"};
+    public static void main(String[] args) {
+        // Array of file paths for CSV files to be processed
+        String[] files = {"model_1.csv", "model_2.csv", "model_3.csv"};
 
-		for (String filePath : modelFiles) {
-			System.out.println("\nProcessing file: " + filePath);
-			evaluateModel(filePath);
-		}
-	}
+        // Iterate over each file path
+        for (String filePath : files) {
+            try (FileReader filereader = new FileReader(filePath);
+                 CSVReader csvReader = new CSVReaderBuilder(filereader).withSkipLines(1).build()) {
+                // Read all data from CSV
+                List<String[]> allData = csvReader.readAll();
+                // Convert data into Prediction objects and sort by predicted values
+                List<Prediction> predictions = convertAndSortData(allData);
 
-	public static void evaluateModel(String filePath) {
-		FileReader filereader;
-		List<String[]> allData;
-		List<Integer> actual = new ArrayList<>();
-		List<Double> predicted = new ArrayList<>();
+                // Calculate metrics
+                double bce = calculateBCE(predictions);
+                int[] confusionMatrix = calculateConfusionMatrix(predictions, 0.5);
+                double accuracy = calculateAccuracy(confusionMatrix);
+                double precision = calculatePrecision(confusionMatrix);
+                double recall = calculateRecall(confusionMatrix);
+                double f1Score = calculateF1Score(precision, recall);
+                double aucRoc = calculateAUCROC(predictions, 100);
 
-		try {
-			filereader = new FileReader(filePath);
-			CSVReader csvReader = new CSVReaderBuilder(filereader).withSkipLines(1).build();
-			allData = csvReader.readAll();
-		} catch (Exception e) {
-			System.out.println("Error reading the CSV file: " + filePath);
-			return;
-		}
+                // Output the calculated metrics for each file
+                System.out.println("Metrics for " + filePath + ":");
+                System.out.println("BCE: " + bce);
+                System.out.println("Accuracy: " + accuracy);
+                System.out.println("Precision: " + precision);
+                System.out.println("Recall: " + recall);
+                System.out.println("F1 Score: " + f1Score);
+                System.out.println("AUC-ROC: " + aucRoc);
+            } catch (Exception e) {
+                // Handle exceptions related to file processing
+                System.out.println("Error processing the CSV file " + filePath);
+                e.printStackTrace();
+            }
+        }
+    }
 
-		System.out.println("First 10 rows:");
-		int count = 0;
-		for (String[] row : allData) {
-			int y_true = Integer.parseInt(row[0]);  // Convert actual values to integers (0 or 1)
-			double y_pred = Double.parseDouble(row[1]);  // Predicted probability
+    /**
+     * Converts CSV data into a sorted list of Prediction objects.
+     */
+    private static List<Prediction> convertAndSortData(List<String[]> data) {
+        List<Prediction> predictions = new ArrayList<>();
+        for (String[] row : data) {
+            double actual = Double.parseDouble(row[0]);
+            double predicted = Double.parseDouble(row[1]);
+            predictions.add(new Prediction(actual, predicted));
+        }
+        // Sort predictions based on the predicted probability
+        Collections.sort(predictions, (p1, p2) -> Double.compare(p1.predicted, p2.predicted));
+        return predictions;
+    }
 
-			actual.add(y_true);
-			predicted.add(y_pred);
+    /**
+     * Calculates Binary Cross-Entropy (BCE) for the predictions.
+     */
+    private static double calculateBCE(List<Prediction> predictions) {
+        double bce = 0;
+        for (Prediction p : predictions) {
+            double actual = p.actual;
+            double predicted = p.predicted;
+            // Log terms are protected against log(0) by adding a small constant (1e-12)
+            bce += actual * Math.log(predicted + 1e-12) + (1 - actual) * Math.log(1 - predicted + 1e-12);
+        }
+        return -bce / predictions.size();  // Average BCE over all predictions
+    }
 
-			if (count < 10) {
-				System.out.println(y_true + "  \t  " + y_pred);
-			}
-			count++;
-		}
+    /**
+     * Builds a confusion matrix for a given threshold.
+     */
+    private static int[] calculateConfusionMatrix(List<Prediction> predictions, double threshold) {
+        int tp = 0, tn = 0, fp = 0, fn = 0;
+        for (Prediction p : predictions) {
+            if (p.predicted >= threshold) {
+                if (p.actual == 1.0) tp++;  // True positive
+                else fp++;  // False positive
+            } else {
+                if (p.actual == 1.0) fn++;  // False negative
+                else tn++;  // True negative
+            }
+        }
+        return new int[]{tp, tn, fp, fn};
+    }
 
-		double bce = calculateBCE(actual, predicted);
-		int[] confusionMatrix = calculateConfusionMatrix(actual, predicted, 0.5);
-		double accuracy = calculateAccuracy(confusionMatrix);
-		double precision = calculatePrecision(confusionMatrix);
-		double recall = calculateRecall(confusionMatrix);
-		double f1Score = calculateF1Score(precision, recall);
-		double aucRoc = calculateAUC(actual, predicted);
+    /**
+     * Calculates the accuracy from the confusion matrix.
+     */
+    private static double calculateAccuracy(int[] matrix) {
+        double total = matrix[0] + matrix[1] + matrix[2] + matrix[3];
+        return (matrix[0] + matrix[1]) / total;
+    }
 
-		System.out.println("\n--- Evaluation Metrics ---");
-		System.out.println("Binary Cross-Entropy (BCE): " + bce);
-		System.out.println("Accuracy: " + accuracy);
-		System.out.println("Precision: " + precision);
-		System.out.println("Recall: " + recall);
-		System.out.println("F1 Score: " + f1Score);
-		System.out.println("AUC-ROC: " + aucRoc + "\n");
-	}
+    /**
+     * Calculates the precision from the confusion matrix.
+     */
+    private static double calculatePrecision(int[] matrix) {
+        return matrix[0] / (double) (matrix[0] + matrix[2]);
+    }
 
-	public static double calculateBCE(List<Integer> actual, List<Double> predicted) {
-		double sum = 0.0;
-		int n = actual.size();
-		for (int i = 0; i < n; i++) {
-			double y_hat = predicted.get(i);
-			double y = actual.get(i);
-			sum += y * Math.log(y_hat + 1e-10) + (1 - y) * Math.log(1 - y_hat + 1e-10);
-		}
-		return -sum / n;
-	}
+    /**
+     * Calculates the recall from the confusion matrix.
+     */
+    private static double calculateRecall(int[] matrix) {
+        return matrix[0] / (double) (matrix[0] + matrix[3]);
+    }
 
-	public static int[] calculateConfusionMatrix(List<Integer> actual, List<Double> predicted, double threshold) {
-		int TP = 0, FP = 0, TN = 0, FN = 0;
-		for (int i = 0; i < actual.size(); i++) {
-			int predictedLabel = predicted.get(i) >= threshold ? 1 : 0;
-			if (actual.get(i) == 1 && predictedLabel == 1) TP++;
-			if (actual.get(i) == 0 && predictedLabel == 1) FP++;
-			if (actual.get(i) == 0 && predictedLabel == 0) TN++;
-			if (actual.get(i) == 1 && predictedLabel == 0) FN++;
-		}
-		return new int[]{TP, FP, TN, FN};
-	}
+    /**
+     * Calculates the F1 Score from precision and recall.
+     */
+    private static double calculateF1Score(double precision, double recall) {
+        return 2 * (precision * recall) / (precision + recall);
+    }
 
-	public static double calculateAccuracy(int[] cm) {
-		int TP = cm[0], FP = cm[1], TN = cm[2], FN = cm[3];
-		return (double) (TP + TN) / (TP + TN + FP + FN);
-	}
+    /**
+     * Calculates the Area Under the Curve (AUC) for the Receiver Operating Characteristic (ROC) curve using the trapezoidal rule.
+     */
+    private static double calculateAUCROC(List<Prediction> predictions, int numThresholds) {
+        double aucRoc = 0;
+        List<Double> tprList = new ArrayList<>();
+        List<Double> fprList = new ArrayList<>();
 
-	public static double calculatePrecision(int[] cm) {
-		int TP = cm[0], FP = cm[1];
-		return TP + FP == 0 ? 0 : (double) TP / (TP + FP);
-	}
+        long totalPositives = predictions.stream().filter(p -> p.actual == 1.0).count();
+        long totalNegatives = predictions.size() - totalPositives;
 
-	public static double calculateRecall(int[] cm) {
-		int TP = cm[0], FN = cm[3];
-		return TP + FN == 0 ? 0 : (double) TP / (TP + FN);
-	}
+        for (int i = 0; i <= numThresholds; i++) {
+            double threshold = i / (double) numThresholds;
+            long tp = 0, fp = 0;
+            for (Prediction p : predictions) {
+                if (p.predicted >= threshold) {
+                    if (p.actual == 1.0) tp++;
+                    else fp++;
+                }
+            }
+            double tpr = (double) tp / totalPositives;
+            double fpr = (double) fp / totalNegatives;
+            tprList.add(tpr);
+            fprList.add(fpr);
+        }
 
-	public static double calculateF1Score(double precision, double recall) {
-		return (precision + recall == 0) ? 0 : 2 * (precision * recall) / (precision + recall);
-	}
+        for (int i = 1; i <= numThresholds; i++) {
+            double x1 = fprList.get(i-1), x2 = fprList.get(i);
+            double y1 = tprList.get(i-1), y2 = tprList.get(i);
+            aucRoc += Math.abs((y1 + y2) * (x2 - x1) / 2);
+        }
 
-	public static double calculateAUC(List<Integer> actual, List<Double> predicted) {
-		int numPos = 0, numNeg = 0;
-		for (int label : actual) {
-			if (label == 1) numPos++;
-			else numNeg++;
-		}
+        return aucRoc;
+    }
 
-		double[] tpr = new double[101];
-		double[] fpr = new double[101];
-		for (int i = 0; i <= 100; i++) {
-			double threshold = i / 100.0;
-			int[] cm = calculateConfusionMatrix(actual, predicted, threshold);
-			tpr[i] = cm[0] / (double) numPos; // True Positive Rate
-			fpr[i] = cm[1] / (double) numNeg; // False Positive Rate
-		}
+    /**
+     * A simple class representing a prediction with an actual and predicted value.
+     */
+    static class Prediction implements Comparable<Prediction> {
+        double actual;
+        double predicted;
 
-		double auc = 0;
-		for (int i = 1; i <= 100; i++) {
-			auc += (tpr[i - 1] + tpr[i]) * (fpr[i - 1] - fpr[i]) / 2.0;
-		}
-		return auc;
-	}
+        Prediction(double actual, double predicted) {
+            this.actual = actual;
+            this.predicted = predicted;
+        }
+
+        @Override
+        public int compareTo(Prediction o) {
+            return Double.compare(this.predicted, o.predicted);
+        }
+    }
 }
